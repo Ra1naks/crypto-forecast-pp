@@ -13,52 +13,13 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from cryptocast.config import load_config  # noqa: E402
+from cryptocast.dashboard_names import human  # noqa: E402
 from streamlit_autorefresh import st_autorefresh  # noqa: E402
 
 FACT, FORECAST, BAND, ALT, MUTED = "#2a78d6", "#eb6834", "rgba(235,104,52,0.15)", "#1baf7a", "#8a8981"
 MODEL_COLORS = {"naive": "#8a8981", "naive_ma7": "#c3c2b7", "elasticnet": "#1baf7a", "lightgbm": "#2a78d6", "mlp": "#eb6834"}
 MODEL_NAMES = {"naive": "Наивный (вчера)", "naive_ma7": "Среднее за 7 дней", "elasticnet": "ElasticNet (HAR)", "lightgbm": "LightGBM", "mlp": "MLP"}
 TARGET_NAMES = {"log_qv": "Объём торгов", "log_rv": "Волатильность"}
-FEATURE_NAMES = {
-    "mkt_log_qv": "объём сегодня (лог)", "mkt_log_rv": "волатильность сегодня (лог)",
-    "mkt_log_qv_ma7": "средний объём 7д (лог)", "mkt_log_qv_ma30": "средний объём 30д (лог)",
-    "mkt_log_rv_ma7": "средняя волатильность 7д (лог)", "mkt_log_rv_ma30": "средняя волатильность 30д (лог)",
-    "mkt_log_qv_vs_ma30": "объём относительно 30д", "mkt_log_rv_vs_ma30": "волатильность относительно 30д",
-    "mkt_log_qv_vs_ma7": "объём относительно 7д", "mkt_log_rv_vs_ma7": "волатильность относительно 7д",
-    "mkt_log_trades": "число сделок (лог)", "mkt_taker_buy_ratio": "доля покупок тейкеров",
-    "mkt_abs_return_1d": "модуль доходности за день", "mkt_range_log": "дневной диапазон (лог)",
-    "mkt_parkinson": "волатильность Паркинсона", "mkt_max_abs_ret": "макс. часовая доходность",
-    "mkt_rs_pos_share": "доля положительной вариации", "mkt_volume_hhi": "концентрация объёма в часах",
-    "mkt_last4h_share": "доля объёма за последние 4 ч", "mkt_btc_log_qv": "объём BTC (лог)",
-    "mkt_btc_log_rv": "волатильность BTC (лог)", "mkt_btc_return_1d": "доходность BTC",
-    "mkt_cross_rv_mean": "средняя волатильность рынка", "mkt_cross_qv_mean": "средний объём рынка",
-    "mkt_rv_vs_cross": "волатильность относительно рынка", "cal_is_weekend": "прогноз на выходной день",
-    "cal_dow": "день недели прогноза", "fng_value": "индекс страха и жадности", "fng_change_7d": "индекс: изменение 7д",
-    "fng_ma7": "индекс: среднее 7д", "fng_z30": "индекс: отклонение от 30д", "txt_sent_mean": "тональность новостей",
-    "txt_log_n_articles": "число новостей (лог)", "txt_topic_hack_share": "доля новостей о взломах",
-    "txt_topic_regulation_share": "доля новостей о регулировании", "txt_topic_etf_share": "доля новостей об ETF",
-    "txt_mention_share": "доля упоминаний инструмента", "txt_available": "есть текстовые данные",
-    "symbol": "инструмент", "cal_dow_sin": "день недели прогноза (sin)", "cal_dow_cos": "день недели прогноза (cos)",
-    "cal_month_sin": "месяц (sin)", "cal_month_cos": "месяц (cos)", "cal_is_month_end": "конец месяца",
-    "mkt_return_1d": "доходность за день", "mkt_return_3d": "доходность за 3 дня", "mkt_return_7d": "доходность за 7 дней",
-    "mkt_return_30d": "доходность за 30 дней", "mkt_log_trades_ma7": "число сделок, среднее 7д (лог)",
-    "mkt_taker_ratio_ma7": "доля покупок тейкеров, среднее 7д", "mkt_n_anomalies": "часов с аномальным объёмом",
-    "txt_neg_share": "доля негативных заголовков", "txt_sent_ma7": "тональность, среднее 7д",
-    "txt_mention_sentiment": "тональность упоминаний инструмента", "txt_sent_std": "разброс тональности",
-}
-
-
-def human(feature: str) -> str:
-    if feature in FEATURE_NAMES:
-        return FEATURE_NAMES[feature]
-    for suffix, label in (("_lag", "лаг"), ("_ma", "среднее"), ("_std", "ст. откл.")):
-        if suffix in feature:
-            base, _, n = feature.rpartition(suffix)
-            if n.isdigit() and base in FEATURE_NAMES:
-                return f"{FEATURE_NAMES[base]} ({label} {n}д)"
-    return feature
-
-
 st.set_page_config(page_title="cryptocast", page_icon="📈", layout="wide")
 CFG = load_config()
 MART = CFG.lake_dir / "mart"
@@ -379,9 +340,13 @@ with tab_monitor:
             fig.add_trace(go.Scatter(x=s["target_date"], y=s["rolling_mae_retrained"], name="После переобучения", mode="lines", line=dict(color=ALT, width=2)))
         fig.add_trace(go.Scatter(x=s["target_date"], y=s["threshold"], name="Порог", mode="lines", line=dict(color=MUTED, width=2, dash="dash")))
         fig.add_vline(x=pd.Timestamp(sim_summary["start"]), line=dict(color=MUTED, dash="dot"))
+        fig.add_annotation(x=pd.Timestamp(sim_summary["start"]), y=1.0, yref="paper", text="начало сдвига", showarrow=False, xanchor="left", font=dict(color="#52514e", size=11))
+        info = sim_summary["targets"].get(target, {})
+        if info.get("first_trigger_date"):
+            fig.add_vline(x=pd.Timestamp(info["first_trigger_date"]), line=dict(color="#52514e", width=1))
+            fig.add_annotation(x=pd.Timestamp(info["first_trigger_date"]), y=0.92, yref="paper", text="правило сработало", showarrow=False, xanchor="left", font=dict(color="#52514e", size=11))
         fig.update_yaxes(title="MAE (лог)", rangemode="tozero")
         draw(style_axes(fig, "СИМУЛЯЦИЯ: реакция на искусственный сдвиг", 340))
-        info = sim_summary["targets"].get(target, {})
         st.json({k: info[k] for k in ("first_trigger_date", "psi_share", "retrain_triggered", "candidate_promoted_in_simulation") if k in info})
     else:
         st.caption("Симуляция ещё не запускалась: python -m cryptocast simulate-drift")
