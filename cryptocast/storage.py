@@ -87,8 +87,8 @@ class Store:
         return self.con.execute(sql, params or []).df()
 
     def scalar(self, sql: str, params: list | None = None):
-        row = self.con.execute(sql, params or []).fetchone()
-        return row[0] if row else None
+        rows = self.con.execute(sql, params or []).fetchall()
+        return rows[0][0] if rows else None
 
     def get_watermark(self, source: str) -> str | None:
         return self.scalar("SELECT value FROM ops.watermarks WHERE source = ?", [source])

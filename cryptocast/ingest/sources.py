@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import feedparser
@@ -121,7 +122,7 @@ def collect_klines(store: Store, client: HttpClient, symbol: str, now: dt.dateti
         if not rows:
             break
         frame = parse_klines(symbol, rows, now_ms, source="binance")
-        result.received += len(rows) if not frame.empty else 0
+        result.received += len(frame)
         if frame.empty:
             break
         result.inserted += store.upsert_ignore("raw.klines", frame)
@@ -197,70 +198,113 @@ def parse_gdelt(articles: Iterable[dict], source: str = "gdelt") -> pd.DataFrame
     return frame.drop_duplicates("url_hash") if not frame.empty else frame
 
 
-def bootstrap_gdelt_archive(store: Store, result: SourceResult) -> None:
-    """Если БД пуста, поднимает историю из архива, ранее собранного этим же коллектором."""
+def _archive_paths(store: Store) -> tuple[Path, Path]:
     archive = store.cfg.root / store.cfg["sources"]["gdelt"]["archive_file"]
-    if result.watermark_before or not archive.exists():
+    return archive, archive.with_suffix(".state.json")
+
+
+def bootstrap_gdelt_archive(store: Store, result: SourceResult) -> None:
+    """Если состояния ещё нет, поднимает историю из архива, собранного этим же коллектором."""
+    archive, state_file = _archive_paths(store)
+    if store.get_watermark(f"{result.source}:head") or not archive.exists() or not state_file.exists():
         return
     frame = pd.read_parquet(archive)
+    frame = frame[frame["source"] == result.source].copy()
     frame["ingested_at"] = utcnow()
     columns = ["url_hash", "url", "title", "summary", "domain", "seen_at", "source", "language", "ingested_at"]
     result.received += len(frame)
     result.inserted += store.upsert_ignore("raw.news", frame[columns])
-    watermark = frame.attrs.get("watermark") or pd.Timestamp(frame["seen_at"].max()).normalize().isoformat()
-    store.set_watermark("gdelt", watermark)
-    result.watermark_before = None
+    state = json.loads(state_file.read_text(encoding="utf-8")).get(result.source, {})
+    for edge in ("head", "tail"):
+        if state.get(edge):
+            store.set_watermark(f"{result.source}:{edge}", state[edge])
     result.note = f"история поднята из архива {archive.name}"
 
 
-def collect_gdelt(store: Store, client: HttpClient, now: dt.datetime | None = None,
-                  max_requests: int | None = None) -> SourceResult:
-    """Загружает окна новостей по возрастанию дат; watermark — конец последнего успешного окна."""
+def export_gdelt_archive(store: Store) -> int:
+    """Сохраняет новости GDELT и границы загрузки для быстрого развёртывания с нуля."""
+    archive, state_file = _archive_paths(store)
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    frame = store.df("SELECT * EXCLUDE (ingested_at) FROM raw.news WHERE source LIKE 'gdelt%' ORDER BY url_hash")
+    frame.to_parquet(archive, index=False)
+    state: dict[str, dict[str, str | None]] = {}
+    for key in store.cfg["sources"]["gdelt"]["queries"]:
+        source = f"gdelt:{key}"
+        state[source] = {edge: store.get_watermark(f"{source}:{edge}") for edge in ("head", "tail")}
+    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return len(frame)
+
+
+def _fetch_gdelt_window(store: Store, client: HttpClient, source: str, query: str,
+                        start: dt.datetime, end: dt.datetime) -> pd.DataFrame:
     cfg = store.cfg["sources"]["gdelt"]
-    source = "gdelt"
-    result = SourceResult(source=source, watermark_before=store.get_watermark(source))
+    params = {
+        "query": query, "mode": "ArtList", "format": "json", "maxrecords": cfg["maxrecords"],
+        "sort": cfg["sort"], "startdatetime": _gdelt_time(start), "enddatetime": _gdelt_time(end),
+    }
+    response = client.get(cfg["url"], params=params, timeout=cfg["timeout_seconds"])
+    try:
+        articles = json.loads(response.text, strict=False).get("articles", [])
+    except json.JSONDecodeError as exc:
+        raise SourceUnavailable(f"битый JSON GDELT: {exc}") from exc
+    return parse_gdelt(articles, source=source)
+
+
+def collect_gdelt(store: Store, client: HttpClient, key: str, now: dt.datetime | None = None,
+                  max_requests: int | None = None) -> SourceResult:
+    """Двусторонняя загрузка окон: сначала свежие данные вперёд, затем история назад.
+
+    head — конец последнего загруженного свежего окна, tail — начало самого старого.
+    Обе границы двигаются только после успешной записи окна, поэтому обрыв ничего не теряет.
+    """
+    cfg = store.cfg["sources"]["gdelt"]
+    source = f"gdelt:{key}"
+    head_key, tail_key = f"{source}:head", f"{source}:tail"
+    result = SourceResult(source=source)
     bootstrap_gdelt_archive(store, result)
-    now = now or utcnow()
-    current = store.get_watermark(source)
-    start = (
-        dt.datetime.fromisoformat(current) - dt.timedelta(days=cfg["overlap_days"])
-        if current
-        else dt.datetime.fromisoformat(store.cfg["universe"]["start_date"])
-    )
+    result.watermark_before = f"{store.get_watermark(head_key)}|{store.get_watermark(tail_key)}"
+    now = (now or utcnow()).replace(minute=0, second=0, microsecond=0)
     window = dt.timedelta(days=cfg["window_days"])
+    history_start = dt.datetime.fromisoformat(store.cfg["universe"]["start_date"])
     budget = cfg["max_requests_per_run"] if max_requests is None else max_requests
-    done = 0
-    while start < now and done < budget:
-        end = min(start + window, now)
-        params = {
-            "query": cfg["query"], "mode": "ArtList", "format": "json",
-            "maxrecords": cfg["maxrecords"], "sort": cfg["sort"],
-            "startdatetime": _gdelt_time(start), "enddatetime": _gdelt_time(end),
-        }
+    done, failures = 0, 0
+
+    def plan() -> tuple[dt.datetime, dt.datetime, str] | None:
+        head, tail = store.get_watermark(head_key), store.get_watermark(tail_key)
+        if head is None:
+            return now - window, now, "first"
+        head_dt = dt.datetime.fromisoformat(head)
+        if head_dt < now:
+            start = head_dt - dt.timedelta(days=cfg["overlap_days"])
+            return start, min(start + window, now), "forward"
+        tail_dt = dt.datetime.fromisoformat(tail)
+        if tail_dt > history_start:
+            return max(tail_dt - window, history_start), tail_dt, "backward"
+        return None
+
+    while done < budget and (step := plan()) is not None:
+        start, end, direction = step
         try:
-            response = client.get(cfg["url"], params=params, timeout=cfg["timeout_seconds"])
-            try:
-                articles = json.loads(response.text, strict=False).get("articles", [])
-            except json.JSONDecodeError as exc:
-                raise SourceUnavailable(f"битый JSON GDELT: {exc}") from exc
+            frame = _fetch_gdelt_window(store, client, source, cfg["queries"][key], start, end)
         except SourceUnavailable as exc:
-            result.partial_error = f"окно {start:%Y-%m-%d}: {exc}"
-            break
-        frame = parse_gdelt(articles)
+            failures += 1
+            done += 1
+            if failures >= cfg["max_consecutive_failures"]:
+                result.partial_error = f"окно {start:%Y-%m-%d}: {str(exc)[:200]}"
+                break
+            time.sleep(cfg["retry_pause_seconds"])
+            continue
+        failures = 0
+        done += 1
         result.received += len(frame)
         result.inserted += store.upsert_ignore("raw.news", frame)
-        done += 1
-        if end >= now:
-            # Хвост (незавершённая неделя) перечитывается за счёт overlap_days.
-            store.set_watermark(source, end.replace(minute=0, second=0, microsecond=0).isoformat())
-        else:
-            store.set_watermark(source, end.isoformat())
-        start = end
-        if start < now and done < budget:
+        if direction in ("first", "forward"):
+            store.set_watermark(head_key, end.isoformat())
+        if direction in ("first", "backward"):
+            store.set_watermark(tail_key, start.isoformat())
+        if done < budget:
             time.sleep(cfg["pause_seconds"])
-    result.watermark_after = store.get_watermark(source)
-    if start < now and result.partial_error is None:
-        result.note = f"исчерпан лимит запросов; история догрузится в следующих запусках (до {start:%Y-%m-%d})"
+    result.watermark_after = f"{store.get_watermark(head_key)}|{store.get_watermark(tail_key)}"
     return result
 
 
@@ -355,7 +399,14 @@ def ingest_all(store: Store, run_id: str, client: HttpClient | None = None,
                 store, run_id, f"rss:{name}", lambda n=name, u=url: collect_rss_feed(store, client, n, u)
             )
     if enabled("gdelt"):
-        statuses["gdelt"] = run_with_log(
-            store, run_id, "gdelt", lambda: collect_gdelt(store, client, max_requests=gdelt_max_requests)
+        gdelt = cfg["sources"]["gdelt"]
+        gdelt_client = HttpClient(
+            timeout=gdelt["timeout_seconds"], max_retries=1, backoff_base=gdelt["retry_pause_seconds"],
+            backoff_max=http["backoff_max_seconds"], user_agent=http["user_agent"],
         )
+        for key in gdelt["queries"]:
+            statuses[f"gdelt:{key}"] = run_with_log(
+                store, run_id, f"gdelt:{key}",
+                lambda k=key: collect_gdelt(store, gdelt_client, k, max_requests=gdelt_max_requests),
+            )
     return statuses

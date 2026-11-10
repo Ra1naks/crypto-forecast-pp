@@ -59,8 +59,11 @@ def build_hourly(frame: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.Dat
     data["log_return"] = np.log(data["close"] / grouped["close"].shift(1))
     data["log_quote_volume"] = np.log1p(data["quote_volume"])
     params = cfg["staging"]
-    median = grouped["log_quote_volume"].transform("median")
-    mad = (data["log_quote_volume"] - median).abs().groupby(data["symbol"]).transform("median").replace(0, np.nan)
+    # Базовый уровень — только прошлое (скользящие 30 суток), иначе флаг зависел бы от будущего.
+    past = grouped["log_quote_volume"].shift(1)
+    median = past.groupby(data["symbol"]).transform(lambda s: s.rolling(720, min_periods=168).median())
+    deviation = (past - median).abs()
+    mad = deviation.groupby(data["symbol"]).transform(lambda s: s.rolling(720, min_periods=168).median()).replace(0, np.nan)
     data["is_volume_anomaly"] = ((data["log_quote_volume"] - median).abs() / (1.4826 * mad)) > params["anomaly_robust_z"]
     data["is_price_jump"] = data["log_return"].abs() > params["price_jump_abs_log_return"]
     data["date"] = data["open_time"].dt.floor("D")

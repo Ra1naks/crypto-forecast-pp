@@ -12,3 +12,4 @@ snapshot/offline_demo/
 .ipynb_checkpoints/
 ~$*
 node_modules/
+data_gdelt_tmp/

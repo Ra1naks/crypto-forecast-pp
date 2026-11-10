@@ -36,17 +36,21 @@ sources:
   gdelt:
     enabled: true
     url: https://api.gdeltproject.org/api/v2/doc/doc
-    query: "(bitcoin OR ethereum OR solana OR xrp OR cryptocurrency) sourcelang:english"
+    # Запросы с OR и sourcelang на практике чаще получают 429, поэтому термины простые,
+    # язык фильтруется на нашей стороне (см. docs/data_sources.md).
+    queries: {bitcoin: bitcoin}
     window_days: 7
     maxrecords: 250
     sort: HybridRel
-    pause_seconds: 15
+    pause_seconds: 8
     timeout_seconds: 120
-    # Лимит запросов за один запуск: полная история догружается за несколько запусков,
-    # watermark продвигается только по успешно обработанным окнам.
-    max_requests_per_run: 400
+    retry_pause_seconds: 45
+    # Бюджет обычного запуска: свежие окна + немного истории. Полная история —
+    # командой backfill-gdelt (часы из-за лимита API).
+    max_requests_per_run: 6
+    max_consecutive_failures: 2
     overlap_days: 2
-    # Если БД пуста, а архив есть, история новостей поднимается из него (GDELT — часы загрузки).
+    # Если БД пуста, а архив есть, история новостей поднимается из него.
     archive_file: snapshot/gdelt_archive.parquet
   rss:
     enabled: true
