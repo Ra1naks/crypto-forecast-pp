@@ -5,6 +5,7 @@ TF-IDF+SVD) обучаются строго на train текущего фолд
 """
 from __future__ import annotations
 
+import json
 import warnings
 from dataclasses import dataclass, field
 
@@ -21,6 +22,8 @@ from cryptocast.features import HAR_COLUMNS, NAIVE_COLUMN, feature_columns
 from cryptocast.ml.metrics import compute_metrics
 
 SVD_PREFIX = "svd_"
+# TF-IDF+SVD зависят только от (новости, конец train, зерно): кэш ускоряет подбор и не меняет результат.
+_SVD_CACHE: dict[tuple, tuple["TextSVD", pd.DataFrame]] = {}
 
 
 # ---------------------------------- Разбиения -------------------------------------
@@ -254,12 +257,37 @@ class FittedPipeline:
         self.svd: TextSVD | None = None
         self.model: BaseModel | None = None
         self.features: list[str] = []
+        self._daily_cache: tuple[int, pd.DataFrame] | None = None
+
+    def __getstate__(self) -> dict:
+        state = dict(self.__dict__)
+        state["_daily_cache"] = None
+        return state
+
+    def _svd_daily(self, news: pd.DataFrame) -> pd.DataFrame:
+        if self._daily_cache is not None and self._daily_cache[0] == id(news):
+            return self._daily_cache[1]
+        daily = self.svd.transform_daily(news)  # type: ignore[union-attr]
+        self._daily_cache = (id(news), daily)
+        return daily
 
     def _svd_join(self, frame: pd.DataFrame, news: pd.DataFrame) -> pd.DataFrame:
         if self.svd is None:
             return frame
-        daily = self.svd.transform_daily(news)
+        daily = self._svd_daily(news)
         return frame.merge(daily, on="date", how="left") if not daily.empty else frame.assign(**{c: np.nan for c in self.svd.columns})
+
+    def _fit_svd(self, news: pd.DataFrame) -> None:
+        key = (id(news), len(news), self.train_end_, self.spec.seed, json.dumps(self.cfg["features"]["text"], sort_keys=True))
+        if key not in _SVD_CACHE:
+            fitted = TextSVD(self.cfg, self.spec.seed).fit(news[news["date"] <= self.train_end_])
+            daily = fitted.transform_daily(news) if fitted.vectorizer is not None else pd.DataFrame()
+            _SVD_CACHE[key] = (fitted, daily)
+        self.svd, daily = _SVD_CACHE[key]
+        if self.svd.vectorizer is None:
+            self.svd = None
+        else:
+            self._daily_cache = (id(news), daily)
 
     def _build_model(self) -> BaseModel:
         s = self.spec
@@ -292,11 +320,8 @@ class FittedPipeline:
         train = train.sort_values(["date", "symbol"]).reset_index(drop=True)
         self.train_end_ = pd.Timestamp(train["date"].max())
         if self.spec.model in ("lightgbm", "mlp") and self.spec.use_svd and "text" in self.spec.feature_set:
-            train_news = news[news["date"] <= self.train_end_] if not news.empty else news
-            if not train_news.empty:
-                self.svd = TextSVD(self.cfg, self.spec.seed).fit(train_news)
-                if self.svd.vectorizer is None:
-                    self.svd = None
+            if not news.empty:
+                self._fit_svd(news)
         data = self._svd_join(train, news)
         y = data[f"target_{self.spec.target}"].to_numpy(dtype=float)
         columns = feature_columns(data, self.spec.feature_set)

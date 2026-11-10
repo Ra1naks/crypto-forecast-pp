@@ -6,7 +6,6 @@ import logging
 from dataclasses import asdict
 from pathlib import Path
 
-import numpy as np
 import optuna
 import pandas as pd
 
@@ -105,7 +104,7 @@ def spec_for(cfg: Config, target: str, model: str, tuned: dict | None = None, **
 def suggest(trial: optuna.Trial, model: str) -> dict:
     if model == "lightgbm":
         return {
-            "n_estimators": trial.suggest_int("n_estimators", 150, 900, step=50),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 500, step=25),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             "num_leaves": trial.suggest_int("num_leaves", 7, 63),
             "min_child_samples": trial.suggest_int("min_child_samples", 10, 120),
@@ -228,6 +227,7 @@ def run_feature_analysis(store: Store, dataset: Dataset) -> pd.DataFrame:
     cfg = store.cfg
     tuned = load_tuned(cfg)
     dev, _, folds = dev_holdout(dataset, cfg)
+    folds = folds[-cfg["validation"]["analysis_folds"]:]
     rows: list[dict] = []
     variants: list[tuple[str, str, dict]] = [
         ("ablation", "только рынок и календарь", {"feature_set": ["market", "calendar"], "use_svd": False}),
@@ -320,5 +320,3 @@ def export_experiments(store: Store) -> None:
 def ensure_ml_schema(store: Store) -> None:
     store.con.execute(EXPERIMENT_DDL)
 
-
-__all__ = ["Dataset", "run_tuning", "run_evaluation", "run_feature_analysis", "reproduce_experiment", "np"]

@@ -33,16 +33,16 @@ CRYPTO_LEXICON = {
     "adoption": 1.2, "approved": 1.5, "approval": 1.5, "record": 0.8, "rebound": 1.4,
 }
 TOPICS = {
-    "hack": r"\b(hack\w*|exploit\w*|breach\w*|stolen|drain\w*|phish\w*|attack\w*)\b",
-    "regulation": r"\b(sec|cftc|regulat\w*|lawsuit\w*|ban|bans|banned|mica|congress|senate|legislat\w*|compliance|sanction\w*)\b",
-    "etf": r"\b(etf|etfs|exchange[- ]traded)\b",
+    "hack": r"\b(?:hack\w*|exploit\w*|breach\w*|stolen|drain\w*|phish\w*|attack\w*)\b",
+    "regulation": r"\b(?:sec|cftc|regulat\w*|lawsuit\w*|ban|bans|banned|mica|congress|senate|legislat\w*|compliance|sanction\w*)\b",
+    "etf": r"\b(?:etf|etfs|exchange[- ]traded)\b",
 }
 MENTIONS = {
-    "BTCUSDT": r"\b(bitcoin|btc|\$btc)\b",
-    "ETHUSDT": r"\b(ethereum|ether|eth|\$eth)\b",
-    "SOLUSDT": r"\b(solana|\$sol|sol)\b",
-    "BNBUSDT": r"\b(bnb|binance coin)\b",
-    "XRPUSDT": r"\b(xrp|ripple)\b",
+    "BTCUSDT": r"\b(?:bitcoin|btc)\b",
+    "ETHUSDT": r"\b(?:ethereum|ether|eth)\b",
+    "SOLUSDT": r"\b(?:solana|sol)\b",
+    "BNBUSDT": r"\b(?:bnb|binance coin)\b",
+    "XRPUSDT": r"\b(?:xrp|ripple)\b",
 }
 
 

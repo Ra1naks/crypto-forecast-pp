@@ -12,7 +12,7 @@ import pandas as pd
 
 from cryptocast.config import Config
 from cryptocast.ml.core import FittedPipeline, Spec
-from cryptocast.ml.experiments import Dataset, dev_holdout
+from cryptocast.ml.experiments import Dataset
 from cryptocast.ml.metrics import compute_metrics
 from cryptocast.storage import Store, write_parquet
 from cryptocast.utils import utcnow
@@ -314,5 +314,3 @@ def train_and_promote(store: Store, dataset: Dataset, evaluation: dict) -> dict[
         results[target] = promote(store, version_id, holdout_preds, metrics[metrics["split"] == "cv"])
     return results
 
-
-__all__ = ["run_predict", "train_and_promote", "rollback", "dev_holdout"]

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 
 import numpy as np
 import pandas as pd
@@ -270,5 +269,4 @@ def simulate_drift(store: Store, days: int = 45, volume_factor: float = 3.0, ret
     for original in workspace.glob("SIMULATION_klines_original.parquet"):
         original.unlink()  # копия исходных свечей больше не нужна
     log.info("Симуляция %s завершена: %s", rid, summary["targets"])
-    _ = shutil  # модуль оставлен для совместимости с очисткой каталога симуляции
     return summary

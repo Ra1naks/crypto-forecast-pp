@@ -1,0 +1,50 @@
+flowchart LR
+  subgraph S["Источники"]
+    A1["Binance REST<br/>часовые свечи, только закрытые"]
+    A2["Fear & Greed Index<br/>суточный JSON"]
+    A3["Hacker News (Algolia)<br/>заголовки, история"]
+    A4["RSS 9 крипто-СМИ<br/>свежие новости"]
+    A5["GDELT DOC API<br/>бережные попытки, часто 429"]
+  end
+
+  subgraph I["Сбор: cryptocast/ingest"]
+    I1["HTTP-клиент: таймауты,<br/>retry, backoff, Retry-After"]
+    I2["Watermark + upsert по ключу<br/>журнал ops.load_log"]
+  end
+
+  subgraph L["Хранилище: DuckDB + Parquet"]
+    R["raw<br/>klines, fng, news"]
+    Q{"Контроль качества<br/>ops.dq_results"}
+    ST["staging<br/>hourly, daily, news, fng"]
+    M["mart<br/>features, forecasts,<br/>metrics, shap, drift"]
+  end
+
+  subgraph P["Обработка и модели"]
+    F["Признаки: единый код<br/>лаги, окна, HAR, календарь,<br/>индекс страха, текст"]
+    V["Walk-forward + отложенные 90 дней<br/>TF-IDF+SVD только на train"]
+    MOD["Наивный | ElasticNet HAR<br/>LightGBM | MLP"]
+    OPT["Optuna + журнал экспериментов<br/>reproduce --experiment-id"]
+    REG["Реестр версий<br/>production / archived / rollback"]
+    INF["Прогноз D+1<br/>тот же код признаков"]
+  end
+
+  subgraph O["Сопровождение"]
+    MON["Мониторинг: PSI, KS,<br/>скользящая MAE, правило переобучения"]
+    XAI["SHAP, permutation,<br/>PDP/ICE, важность по годам"]
+    SIM["simulate-drift<br/>копия данных, метка СИМУЛЯЦИЯ"]
+  end
+
+  DASH["Streamlit + Plotly<br/>факт, прогноз, качество,<br/>объяснение, мониторинг, эксперименты"]
+  USER(("Риск-менеджер /<br/>трейдер фонда"))
+  CLI["Typer CLI: run-all,<br/>APScheduler / планировщик Windows"]
+
+  A1 & A2 & A3 & A4 & A5 --> I1 --> I2 --> R --> Q
+  Q -- "пройден" --> ST --> F --> M
+  Q -- "критичный сбой: витрина заморожена" --> M
+  M --> V --> MOD --> REG --> INF --> M
+  OPT --> MOD
+  M --> MON --> REG
+  REG --> XAI --> M
+  SIM -.-> MON
+  M -- "только чтение Parquet" --> DASH --> USER
+  CLI -.-> I1 & F & MOD & MON

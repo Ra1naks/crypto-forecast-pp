@@ -10,7 +10,6 @@ import shap
 from cryptocast.config import Config
 from cryptocast.ml.core import FittedPipeline, Fold, LightGBMModel, Spec
 from cryptocast.ml.experiments import Dataset, dev_holdout, load_tuned, spec_for
-from cryptocast.ml.metrics import compute_metrics
 from cryptocast.storage import Store, write_parquet
 
 log = logging.getLogger(__name__)
@@ -156,6 +155,3 @@ def run_interpret(store: Store, dataset: Dataset) -> dict:
     }
     return {"permutation_shap_spearman": agreement, "explainers": explainers}
 
-
-def check_prediction_sanity(frame: pd.DataFrame) -> float:
-    return float(compute_metrics("log_qv", frame["y_true"], frame["prediction"])["mae"])

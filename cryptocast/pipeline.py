@@ -7,8 +7,6 @@ import shutil
 import traceback
 from collections.abc import Callable
 
-import pandas as pd
-
 from cryptocast.config import Config
 from cryptocast.features import run_features
 from cryptocast.ingest.sources import ingest_all
@@ -41,7 +39,7 @@ def step(store: Store, run_id: str, name: str, func: Callable[[], object]) -> ob
     except Exception:
         store.con.execute("INSERT INTO ops.pipeline_runs VALUES (?,?,?,?,?,?)", [run_id, name, "failed", started, utcnow(), traceback.format_exc()[-1500:]])
         raise
-    details = json.dumps(result, ensure_ascii=False, default=str)[:1500] if isinstance(result, dict) else ""
+    details = json.dumps(result, ensure_ascii=False, default=str, skipkeys=True)[:1500] if isinstance(result, dict) else ""
     store.con.execute("INSERT INTO ops.pipeline_runs VALUES (?,?,?,?,?,?)", [run_id, name, "success", started, utcnow(), details])
     return result
 
@@ -142,4 +140,3 @@ def make_snapshot(cfg: Config) -> dict:
     return info
 
 
-__all__ = ["run_all", "make_snapshot", "pd"]

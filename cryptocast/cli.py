@@ -36,7 +36,7 @@ def _dataset(store):
 
 
 def _print(value: object) -> None:
-    typer.echo(json.dumps(value, ensure_ascii=False, indent=1, default=str))
+    typer.echo(json.dumps(value, ensure_ascii=False, indent=1, default=str, skipkeys=True))
 
 
 @app.command("run-all")

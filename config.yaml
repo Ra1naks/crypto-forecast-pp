@@ -103,6 +103,7 @@ validation:
   test_days: 90
   gap_days: 7
   warmup_days: 30
+  analysis_folds: 8
 
 models:
   targets: [log_qv, log_rv]
@@ -117,7 +118,7 @@ models:
     subsample_freq: 1
     colsample_bytree: 0.7
     reg_lambda: 2.0
-    num_threads: 4
+    num_threads: 6
   mlp:
     hidden_layer_sizes: [64, 32]
     alpha: 0.001
@@ -129,11 +130,11 @@ models:
   clip_quantiles: [0.005, 0.995]
 
 tuning:
-  folds_last_n: 6
+  folds_last_n: 4
   budgets:
-    lightgbm: {n_trials: 30, timeout_seconds: 240}
+    lightgbm: {n_trials: 30, timeout_seconds: 300}
     elasticnet: {n_trials: 20, timeout_seconds: 60}
-    mlp: {n_trials: 12, timeout_seconds: 240}
+    mlp: {n_trials: 12, timeout_seconds: 300}
 
 registry:
   min_relative_improvement: 0.0
