@@ -1,0 +1,154 @@
+# Конфигурация cryptocast. Секреты и пути окружения — в .env (см. .env.example).
+project:
+  name: cryptocast
+  seed: 42
+
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  snapshot_dir: snapshot
+  db_file: cryptocast.duckdb
+  lake_dir: lake
+
+universe:
+  symbols: [BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT]
+  start_date: "2021-01-01"
+
+http:
+  timeout_seconds: 30
+  max_retries: 5
+  backoff_base_seconds: 2.0
+  backoff_max_seconds: 120.0
+  user_agent: cryptocast-study/1.0
+
+sources:
+  klines:
+    enabled: true
+    base_urls:
+      - https://data-api.binance.vision
+      - https://api.binance.com
+    interval: 1h
+    page_limit: 1000
+    pause_seconds: 0.15
+  fng:
+    enabled: true
+    url: https://api.alternative.me/fng/
+  gdelt:
+    enabled: true
+    url: https://api.gdeltproject.org/api/v2/doc/doc
+    query: "(bitcoin OR ethereum OR solana OR xrp OR cryptocurrency) sourcelang:english"
+    window_days: 7
+    maxrecords: 250
+    sort: HybridRel
+    pause_seconds: 15
+    timeout_seconds: 120
+    # Лимит запросов за один запуск: полная история догружается за несколько запусков,
+    # watermark продвигается только по успешно обработанным окнам.
+    max_requests_per_run: 400
+    overlap_days: 2
+    # Если БД пуста, а архив есть, история новостей поднимается из него (GDELT — часы загрузки).
+    archive_file: snapshot/gdelt_archive.parquet
+  rss:
+    enabled: true
+    timeout_seconds: 25
+    feeds:
+      coindesk: https://www.coindesk.com/arc/outboundfeeds/rss/
+      cointelegraph: https://cointelegraph.com/rss
+      decrypt: https://decrypt.co/feed
+      bitcoinmagazine: https://bitcoinmagazine.com/.rss/full/
+      cryptoslate: https://cryptoslate.com/feed/
+      theblock: https://www.theblock.co/rss.xml
+      utoday: https://u.today/rss
+      cryptopotato: https://cryptopotato.com/feed/
+      beincrypto: https://beincrypto.com/feed/
+
+quality:
+  max_gap_ratio_critical: 0.02        # доля пропущенных часов на инструмент
+  max_gap_hours_recent: 6             # пропуск за последние 7 суток — предупреждение
+  freshness_klines_hours_critical: 12 # свечи старше — критический сбой
+  freshness_fng_days_warn: 3
+  freshness_news_days_warn: 3
+
+staging:
+  min_candles_per_day: 22             # день с меньшим числом свечей невалиден
+  anomaly_robust_z: 8.0
+  price_jump_abs_log_return: 0.5
+
+features:
+  lags: [1, 2, 3, 5, 7, 14]
+  windows: [3, 7, 14, 30]
+  text:
+    svd_components: 10
+    tfidf_max_features: 5000
+    tfidf_min_df: 5
+    ngram_max: 2
+
+validation:
+  holdout_days: 90
+  initial_train_days: 730
+  test_days: 90
+  gap_days: 7
+  warmup_days: 30
+
+models:
+  targets: [log_qv, log_rv]
+  selection_metric: {log_qv: mae, log_rv: qlike}
+  elasticnet: {alpha: 0.001, l1_ratio: 0.5, max_iter: 5000}
+  lightgbm:
+    n_estimators: 400
+    learning_rate: 0.03
+    num_leaves: 15
+    min_child_samples: 40
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.7
+    reg_lambda: 2.0
+    num_threads: 4
+  mlp:
+    hidden_layer_sizes: [64, 32]
+    alpha: 0.001
+    learning_rate_init: 0.001
+    max_iter: 300
+    early_stopping: true
+    validation_fraction: 0.15
+    n_iter_no_change: 15
+  clip_quantiles: [0.005, 0.995]
+
+tuning:
+  folds_last_n: 6
+  budgets:
+    lightgbm: {n_trials: 30, timeout_seconds: 240}
+    elasticnet: {n_trials: 20, timeout_seconds: 60}
+    mlp: {n_trials: 12, timeout_seconds: 240}
+
+registry:
+  min_relative_improvement: 0.0
+  max_worse_than_naive: 1.05
+
+monitoring:
+  reference_days: 365
+  current_days: 30
+  psi_bins: 10
+  psi_threshold: 0.25
+  top_features: 20
+  retrain:
+    rolling_window_days: 14
+    mae_ratio_threshold: 1.2
+    consecutive_days: 3
+    psi_share_threshold: 0.30
+    cooldown_days: 7
+  rollback:
+    min_live_days: 7
+    live_vs_shadow_ratio: 1.10
+
+decision:
+  participation_rate: 0.01     # доля суточного объёма, условно исполнимая без заметного влияния
+  interval_quantiles: [0.1, 0.9]
+  risk_percentiles: {elevated: 0.75, high: 0.9}
+  risk_lookback_days: 365
+
+dashboard:
+  autorefresh_seconds: 300
+
+schedule:
+  daily_time_utc: "00:20"

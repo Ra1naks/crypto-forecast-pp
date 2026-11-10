@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/
+artifacts/
+snapshot/offline_demo/
+*.duckdb
+*.duckdb.wal
+*.log
+.ipynb_checkpoints/
+~$*
+node_modules/
