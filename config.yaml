@@ -33,6 +33,16 @@ sources:
   fng:
     enabled: true
     url: https://api.alternative.me/fng/
+  hn:
+    # История заголовков: Hacker News (Algolia). Заменяет GDELT, у которого 429 при любой
+    # частоте запросов делает историю недоступной (см. docs/data_sources.md).
+    enabled: true
+    url: https://hn.algolia.com/api/v1/search_by_date
+    queries: [bitcoin, ethereum, crypto, cryptocurrency, solana, ripple, binance]
+    window_days: 30
+    hits_per_page: 1000
+    pause_seconds: 0.25
+    overlap_days: 1
   gdelt:
     enabled: true
     url: https://api.gdeltproject.org/api/v2/doc/doc
@@ -47,10 +57,10 @@ sources:
     retry_pause_seconds: 45
     # Бюджет обычного запуска: свежие окна + немного истории. Полная история —
     # командой backfill-gdelt (часы из-за лимита API).
-    max_requests_per_run: 6
-    max_consecutive_failures: 2
+    max_requests_per_run: 3
+    max_consecutive_failures: 1
     overlap_days: 2
-    # Если БД пуста, а архив есть, история новостей поднимается из него.
+    # Если БД пуста, а архив есть, история GDELT поднимается из него.
     archive_file: snapshot/gdelt_archive.parquet
   rss:
     enabled: true

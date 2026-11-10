@@ -82,10 +82,10 @@ def _market_features(daily: pd.DataFrame, cfg: Config) -> pd.DataFrame:
 
 def _calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
     target_date = frame["date"] + pd.Timedelta(days=1)
-    frame["cal_dow"] = target_date.dt.dayofweek.astype(float)
-    frame["cal_is_weekend"] = (target_date.dt.dayofweek >= 5).astype(float)
-    frame["cal_dow_sin"] = np.sin(2 * np.pi * target_date.dt.dayofweek / 7)
-    frame["cal_dow_cos"] = np.cos(2 * np.pi * target_date.dt.dayofweek / 7)
+    frame["cal_dow"] = target_date.dt.day_of_week.astype(float)
+    frame["cal_is_weekend"] = (target_date.dt.day_of_week >= 5).astype(float)
+    frame["cal_dow_sin"] = np.sin(2 * np.pi * target_date.dt.day_of_week / 7)
+    frame["cal_dow_cos"] = np.cos(2 * np.pi * target_date.dt.day_of_week / 7)
     frame["cal_month_sin"] = np.sin(2 * np.pi * (target_date.dt.month - 1) / 12)
     frame["cal_month_cos"] = np.cos(2 * np.pi * (target_date.dt.month - 1) / 12)
     frame["cal_is_month_end"] = target_date.dt.is_month_end.astype(float)
@@ -132,7 +132,10 @@ def _text_features(news: pd.DataFrame, panel: pd.DataFrame, symbols: list[str]) 
     full = pd.DataFrame({"date": pd.date_range(panel["date"].min(), panel["date"].max(), freq="D")})
     daily = full.merge(daily, on="date", how="left")
     daily["txt_available"] = (daily["n_articles"].fillna(0) > 0).astype(float)
-    daily["txt_log_n_articles"] = np.log1p(daily["n_articles"].fillna(0))
+    # Счётчик берётся по потокам с постоянной историей: RSS накапливается только с начала сбора.
+    history_news = news[news["origin"] != "rss"] if "origin" in news else news
+    history_count = history_news.groupby("date").size().reindex(daily["date"]).fillna(0).to_numpy()
+    daily["txt_log_n_articles"] = np.log1p(history_count)
     daily["txt_sent_mean"] = daily["sent_mean"]
     daily["txt_sent_std"] = daily["sent_std"]
     daily["txt_neg_share"] = daily["sent_neg_share"]

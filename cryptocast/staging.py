@@ -132,7 +132,7 @@ def build_news(raw_news: pd.DataFrame) -> pd.DataFrame:
         news[f"topic_{topic}"] = news["title_clean"].str.contains(pattern, regex=True).astype(int)
     for symbol, pattern in MENTIONS.items():
         news[f"mention_{symbol}"] = news["title_clean"].str.contains(pattern, regex=True).astype(int)
-    news["origin"] = np.where(news["source"].str.startswith("rss:"), "rss", "gdelt")
+    news["origin"] = news["source"].str.split(":").str[0]
     keep = ["url_hash", "seen_at", "date", "domain", "origin", "title_clean", "text", "sentiment"]
     keep += [c for c in news.columns if c.startswith(("topic_", "mention_"))]
     return news[keep].reset_index(drop=True)

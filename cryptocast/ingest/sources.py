@@ -308,6 +308,65 @@ def collect_gdelt(store: Store, client: HttpClient, key: str, now: dt.datetime |
     return result
 
 
+# --------------------------------- Новости: Hacker News -----------------------------
+def parse_hn(hits: Iterable[dict], key: str) -> pd.DataFrame:
+    """Заголовки Hacker News. Поле автора намеренно не читается."""
+    rows = []
+    for hit in hits:
+        title = (hit.get("title") or "").strip()
+        object_id = hit.get("objectID")
+        if not title or not object_id:
+            continue
+        url = hit.get("url") or f"https://news.ycombinator.com/item?id={object_id}"
+        rows.append(
+            {
+                "url_hash": url_hash(url),
+                "url": normalize_url(url),
+                "title": clean_summary(title),
+                "summary": "",
+                "domain": urlsplit(url).netloc.lower(),
+                "seen_at": dt.datetime.fromtimestamp(int(hit["created_at_i"]), dt.timezone.utc).replace(tzinfo=None),
+                "source": f"hn:{key}",
+                "language": "english",
+                "ingested_at": utcnow(),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    return frame.drop_duplicates("url_hash") if not frame.empty else frame
+
+
+def collect_hn(store: Store, client: HttpClient, key: str, now: dt.datetime | None = None) -> SourceResult:
+    """Загружает окна по возрастанию дат; watermark — конец последнего успешного окна."""
+    cfg = store.cfg["sources"]["hn"]
+    source = f"hn:{key}"
+    result = SourceResult(source=source, watermark_before=store.get_watermark(source))
+    now = (now or utcnow()).replace(minute=0, second=0, microsecond=0)
+    window = dt.timedelta(days=cfg["window_days"])
+    if result.watermark_before:
+        start = dt.datetime.fromisoformat(result.watermark_before) - dt.timedelta(days=cfg["overlap_days"])
+    else:
+        start = dt.datetime.fromisoformat(store.cfg["universe"]["start_date"])
+    epoch = lambda value: int(value.replace(tzinfo=dt.timezone.utc).timestamp())  # noqa: E731
+    while start < now:
+        end = min(start + window, now)
+        params = {"query": key, "tags": "story", "hitsPerPage": cfg["hits_per_page"],
+                  "numericFilters": f"created_at_i>={epoch(start)},created_at_i<{epoch(end)}"}
+        try:
+            hits = client.get(cfg["url"], params=params).json().get("hits", [])
+        except SourceUnavailable as exc:
+            result.partial_error = f"окно {start:%Y-%m-%d}: {exc}"
+            break
+        frame = parse_hn(hits, key)
+        result.received += len(frame)
+        result.inserted += store.upsert_ignore("raw.news", frame)
+        store.set_watermark(source, end.isoformat())
+        start = end
+        if start < now:
+            time.sleep(cfg["pause_seconds"])
+    result.watermark_after = store.get_watermark(source)
+    return result
+
+
 # --------------------------------- Новости: RSS -------------------------------------
 def parse_rss_entries(entries: Iterable, feed_name: str) -> pd.DataFrame:
     rows = []
@@ -398,6 +457,9 @@ def ingest_all(store: Store, run_id: str, client: HttpClient | None = None,
             statuses[f"rss:{name}"] = run_with_log(
                 store, run_id, f"rss:{name}", lambda n=name, u=url: collect_rss_feed(store, client, n, u)
             )
+    if enabled("hn"):
+        for key in cfg["sources"]["hn"]["queries"]:
+            statuses[f"hn:{key}"] = run_with_log(store, run_id, f"hn:{key}", lambda k=key: collect_hn(store, client, k))
     if enabled("gdelt"):
         gdelt = cfg["sources"]["gdelt"]
         gdelt_client = HttpClient(
