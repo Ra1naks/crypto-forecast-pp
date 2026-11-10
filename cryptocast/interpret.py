@@ -28,18 +28,15 @@ def _shap_for(pipeline: FittedPipeline, frame: pd.DataFrame, news: pd.DataFrame)
 
 def _shap_table(prepared: pd.DataFrame, matrix: pd.DataFrame, values: np.ndarray, base: float,
                 target: str, split: str, fold: int) -> pd.DataFrame:
-    frame = pd.DataFrame(values, columns=[f"shap__{c}" for c in matrix.columns])
+    columns: dict[str, np.ndarray] = {f"shap__{c}": values[:, i] for i, c in enumerate(matrix.columns)}
     numeric = matrix.drop(columns=["symbol"], errors="ignore")
-    for column in numeric.columns:
-        frame[f"value__{column}"] = numeric[column].to_numpy(dtype=float)
-    frame["symbol"] = prepared["symbol"].values
-    frame["date"] = prepared["date"].values
-    frame["target"] = target
-    frame["base_value"] = base
-    frame["prediction"] = base + values.sum(axis=1)
-    frame["y_true"] = prepared[f"target_{target}"].values
-    frame["split"] = split
-    frame["fold"] = fold
+    columns.update({f"value__{c}": numeric[c].to_numpy(dtype=float) for c in numeric.columns})
+    columns.update({
+        "symbol": prepared["symbol"].values, "date": prepared["date"].values, "target": np.full(len(prepared), target),
+        "base_value": np.full(len(prepared), base), "prediction": base + values.sum(axis=1),
+        "y_true": prepared[f"target_{target}"].values, "split": np.full(len(prepared), split), "fold": np.full(len(prepared), fold),
+    })
+    frame = pd.DataFrame(columns)
     return frame
 
 

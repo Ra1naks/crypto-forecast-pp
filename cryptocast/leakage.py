@@ -47,8 +47,8 @@ def truncation_diff(klines: pd.DataFrame, fng: pd.DataFrame, news: pd.DataFrame,
 def timestamp_checks(store: Store) -> list[dict]:
     checks = []
     alignment = store.df(
-        """WITH d AS (SELECT symbol, date, log(quote_volume) AS lqv, log(rv) AS lrv, lead(date) OVER w AS next_date,
-                       lead(log(quote_volume)) OVER w AS next_lqv FROM staging.daily WINDOW w AS (PARTITION BY symbol ORDER BY date))
+        """WITH d AS (SELECT symbol, date, lead(date) OVER w AS next_date,
+                       lead(ln(quote_volume)) OVER w AS next_lqv FROM staging.daily WINDOW w AS (PARTITION BY symbol ORDER BY date))
            SELECT count(*) AS n, sum(CASE WHEN abs(f.target_log_qv - d.next_lqv) > 1e-9 THEN 1 ELSE 0 END) AS bad
            FROM mart.features f JOIN d ON f.symbol = d.symbol AND f.date = d.date
            WHERE f.target_log_qv IS NOT NULL AND d.next_date = d.date + INTERVAL 1 DAY"""
@@ -81,9 +81,9 @@ def shuffled_target_test(store: Store, dataset: Dataset, tuned_params: dict | No
         data = dev[dev[col].notna()].copy()
         spec: Spec = spec_for(cfg, target, "lightgbm", tuned.get(target, {}).get("lightgbm"))
         real_oos, real_metrics = evaluate_spec(spec, data, dataset.news, folds, cfg)
-        # Перемешивание внутри инструмента сохраняет уровень ряда, но разрушает связь с признаками.
+        # Глобальная перестановка делает таргет независимым от признаков (и от инструмента, и от даты).
         shuffled = data.copy()
-        shuffled[col] = shuffled.groupby("symbol")[col].transform(lambda s: rng.permutation(s.to_numpy()))
+        shuffled[col] = rng.permutation(shuffled[col].to_numpy())
         shuf_oos, shuf_metrics = evaluate_spec(spec, shuffled, dataset.news, folds, cfg)
         r2 = 1 - np.mean((shuf_oos["y_true"] - shuf_oos["y_pred"]) ** 2) / np.var(shuf_oos["y_true"])
         result[target] = {

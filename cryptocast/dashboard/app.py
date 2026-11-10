@@ -38,7 +38,13 @@ FEATURE_NAMES = {
     "txt_log_n_articles": "число новостей (лог)", "txt_topic_hack_share": "доля новостей о взломах",
     "txt_topic_regulation_share": "доля новостей о регулировании", "txt_topic_etf_share": "доля новостей об ETF",
     "txt_mention_share": "доля упоминаний инструмента", "txt_available": "есть текстовые данные",
-    "symbol": "инструмент",
+    "symbol": "инструмент", "cal_dow_sin": "день недели прогноза (sin)", "cal_dow_cos": "день недели прогноза (cos)",
+    "cal_month_sin": "месяц (sin)", "cal_month_cos": "месяц (cos)", "cal_is_month_end": "конец месяца",
+    "mkt_return_1d": "доходность за день", "mkt_return_3d": "доходность за 3 дня", "mkt_return_7d": "доходность за 7 дней",
+    "mkt_return_30d": "доходность за 30 дней", "mkt_log_trades_ma7": "число сделок, среднее 7д (лог)",
+    "mkt_taker_ratio_ma7": "доля покупок тейкеров, среднее 7д", "mkt_n_anomalies": "часов с аномальным объёмом",
+    "txt_neg_share": "доля негативных заголовков", "txt_sent_ma7": "тональность, среднее 7д",
+    "txt_mention_sentiment": "тональность упоминаний инструмента", "txt_sent_std": "разброс тональности",
 }
 
 
@@ -91,7 +97,7 @@ def style_axes(fig: go.Figure, title: str = "", height: int = 380) -> go.Figure:
 
 
 def draw(fig: go.Figure) -> None:
-    st.plotly_chart(fig, config={"displaylogo": False}, use_container_width=True)
+    st.plotly_chart(fig, config={"displaylogo": False}, width="stretch")
 
 
 status = load_json("status")
@@ -131,6 +137,8 @@ with tab_decision:
         row = decision[decision["symbol"] == symbol].iloc[0]
         target_day = pd.Timestamp(row["target_date"]).date()
         st.subheader(f"{symbol.replace('USDT', '/USDT')}: прогноз на {target_day} UTC")
+        if target_day <= pd.Timestamp.utcnow().date():
+            st.caption("Прогноз построен по последним закрытым суткам; целевые сутки уже идут. При запуске по расписанию в 00:20 UTC это прогноз на завтра.")
         c1, c2, c3 = st.columns(3)
         c1.metric("Ожидаемый объём", money(row["forecast_volume_usd"]), help="Прогноз суточного объёма в USDT")
         c1.caption(f"Диапазон 80%: {money(row['volume_low_usd'])} – {money(row['volume_high_usd'])}")
@@ -151,7 +159,7 @@ with tab_decision:
             "Перцентиль за год": (decision["rv_percentile_365d"] * 100).round(0).astype(int).astype(str) + "%",
             "Риск": decision["risk_level"],
         })
-        st.dataframe(table, hide_index=True, use_container_width=True)
+        st.dataframe(table, hide_index=True, width="stretch")
         st.info("Показатели помогают оценить масштаб операций и риск, но не являются рекомендацией покупать или продавать.")
 
 # ------------------------------------- Факт и прогноз ------------------------------------
@@ -172,10 +180,12 @@ with tab_series:
         hist = hist[hist["date"] >= period_start].sort_values("date")
         hist["fact"] = np.exp(hist["y_true"]) * multiplier
         hist["forecast"] = np.exp(hist["y_pred"]) * multiplier
+        if not hist.empty:
+            hist = hist.set_index("date").reindex(pd.date_range(hist["date"].min(), hist["date"].max(), freq="D")).rename_axis("date").reset_index()
         live = forecasts[(forecasts["target"] == target) & (forecasts["symbol"] == symbol) & (forecasts["role"] == "production") & (forecasts["source"] == "live")].sort_values("target_date")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist["date"], y=hist["fact"], name="Факт", mode="lines", line=dict(color=FACT, width=2)))
-        fig.add_trace(go.Scatter(x=hist["date"], y=hist["forecast"], name="Прогноз (вне обучения)", mode="lines", line=dict(color=FORECAST, width=2)))
+        fig.add_trace(go.Scatter(x=hist["date"], y=hist["fact"], name="Факт", mode="lines", line=dict(color=FACT, width=2), connectgaps=False))
+        fig.add_trace(go.Scatter(x=hist["date"], y=hist["forecast"], name="Прогноз (вне обучения)", mode="lines", line=dict(color=FORECAST, width=2), connectgaps=False))
         if not live.empty:
             fig.add_trace(go.Scatter(x=live["target_date"], y=live["forecast_value"] * multiplier, name="Прогноз production", mode="markers", marker=dict(size=10, color=FORECAST, symbol="diamond", line=dict(color="#fcfcfb", width=2))))
         holdout_start = hist[hist["split"] == "holdout"]["date"].min()
@@ -185,7 +195,7 @@ with tab_series:
         fig.update_yaxes(title=unit)
         draw(style_axes(fig))
         if not hist.empty:
-            recent = hist.tail(14)
+            recent = hist.dropna(subset=["fact", "forecast"]).tail(14)
             if target == "log_qv":
                 err = (recent["forecast"] / recent["fact"] - 1).abs().mean() * 100
                 st.metric("Средняя ошибка за последние 14 дней", f"{err:.1f}% от объёма")
@@ -214,7 +224,7 @@ with tab_quality:
             table = pd.DataFrame({"Модель": names, "MAE, п.п. волатильности": board["mae"].round(3), "RMSE, п.п.": board["rmse"].round(3), "QLIKE": board["qlike"].round(4),
                                   "Улучшение MAE к наивному, %": board["mae_improvement_pct"].round(1), "Улучшение QLIKE, %": board["qlike_improvement_pct"].round(1)})
             improvement_col, metric_label = "qlike_improvement_pct", "QLIKE"
-        st.dataframe(table, hide_index=True, use_container_width=True)
+        st.dataframe(table, hide_index=True, width="stretch")
         all_symbols = metrics[(metrics["target"] == target) & (metrics["split"] == split) & (metrics["model"] != "naive") & (metrics["symbol"] != "ALL")]
         fig = go.Figure()
         for model in ("elasticnet", "lightgbm", "mlp"):
@@ -252,10 +262,13 @@ with tab_explain:
         top = contrib.head(12).iloc[::-1]
         scale = "лог. объёма" if target == "log_qv" else "лог. волатильности"
         base, pred, true_value = float(row["base_value"]), float(row["prediction"]), float(row["y_true"])
+        def natural(value: float) -> str:
+            return money(float(np.exp(value))) if target == "log_qv" else f"{np.exp(value) * 100:.2f}%"
         m1, m2, m3 = st.columns(3)
-        m1.metric("Среднее модели (база)", f"{base:.3f}")
-        m2.metric("Прогноз (лог)", f"{pred:.3f}", help="база + сумма вкладов всех признаков")
-        m3.metric("Факт на следующий день (лог)", f"{true_value:.3f}")
+        m1.metric("Среднее модели (база)", natural(base), help=f"в логарифмах: {base:.3f}")
+        m2.metric("Прогноз", natural(pred), help=f"база + сумма вкладов всех признаков; в логарифмах {pred:.3f}")
+        m3.metric("Факт на следующий день", natural(true_value) if np.isfinite(true_value) else "ещё нет", help=f"в логарифмах: {true_value:.3f}")
+        st.caption("Вклад +0.10 в логарифме означает примерно +10,5% к прогнозу, вклад −0.10 — примерно −9,5%.")
         fig = go.Figure(go.Bar(y=top["feature"].map(human), x=top["shap"], orientation="h",
                                marker=dict(color=[FACT if v > 0 else FORECAST for v in top["shap"]], cornerradius=4),
                                customdata=top["value"], hovertemplate="%{y}: вклад %{x:+.3f}, значение %{customdata:.4f}<extra></extra>"))
@@ -263,7 +276,7 @@ with tab_explain:
         fig.update_layout(hovermode="closest")
         draw(style_axes(fig, "12 признаков с наибольшим вкладом", 440))
         with st.expander("Все признаки: значение и вклад"):
-            st.dataframe(contrib.assign(Признак=contrib["feature"].map(human)).rename(columns={"value": "Значение", "shap": "Вклад"})[["Признак", "Значение", "Вклад"]], hide_index=True, use_container_width=True)
+            st.dataframe(contrib.assign(Признак=contrib["feature"].map(human)).rename(columns={"value": "Значение", "shap": "Вклад"})[["Признак", "Значение", "Вклад"]], hide_index=True, width="stretch")
 
         st.markdown("##### Что важно для модели в целом: два независимых способа")
         global_importance = load("importance_global")
@@ -342,16 +355,16 @@ with tab_monitor:
         drift = load("drift_latest")
         drifted = drift[drift["target"] == target].sort_values("psi", ascending=False)
         table = pd.DataFrame({"Признак": drifted["feature"].map(human), "PSI": drifted["psi"].round(3), "KS": drifted["ks_stat"].round(3), "p-value (KS)": drifted["ks_pvalue"].map(lambda v: f"{v:.2e}"), "Дрейф": drifted["drifted"].map({True: "Да", False: "Нет"})})
-        st.dataframe(table, hide_index=True, use_container_width=True, height=300)
+        st.dataframe(table, hide_index=True, width="stretch", height=300)
 
         st.markdown("##### Какая версия модели работает и что с ней происходило?")
         reg = registry[registry["target"] == target].sort_values("created_at", ascending=False)
         reg_table = pd.DataFrame({"Версия": reg["version_id"], "Модель": reg["model_name"].map(MODEL_NAMES), "Статус": reg["stage"], "Обучена до": reg["trained_until"], "Данные (хеш)": reg["data_version"], "Создана": reg["created_at"]})
-        st.dataframe(reg_table, hide_index=True, use_container_width=True)
+        st.dataframe(reg_table, hide_index=True, width="stretch")
         events = load("registry_events")
         if not events.empty:
             ev = events[events["target"] == target].sort_values("event_at", ascending=False).head(8)
-            st.dataframe(ev[["event_at", "event", "version_id"]].rename(columns={"event_at": "Время", "event": "Событие", "version_id": "Версия"}), hide_index=True, use_container_width=True)
+            st.dataframe(ev[["event_at", "event", "version_id"]].rename(columns={"event_at": "Время", "event": "Событие", "version_id": "Версия"}), hide_index=True, width="stretch")
 
     st.markdown("##### Как система реагирует на ухудшение? (симуляция)")
     sim_summary = load_json("simulation_summary")
@@ -395,7 +408,10 @@ with tab_exp:
         columns = ["experiment_id", "kind", "model_name", "mae_cv", "mae_holdout"] + (["qlike_cv", "qlike_holdout"] if target == "log_rv" else []) + ["data_version", "seed", "git_commit", "git_dirty", "created_at"]
         table_view = view[columns].copy()
         table_view["git_commit"] = table_view["git_commit"].str[:8]
-        st.dataframe(table_view.round(4), hide_index=True, use_container_width=True, height=280)
+        table_view = table_view.rename(columns={"experiment_id": "ID эксперимента", "kind": "Тип", "model_name": "Модель", "mae_cv": "MAE walk-forward",
+                                                "mae_holdout": "MAE отложенная", "qlike_cv": "QLIKE walk-forward", "qlike_holdout": "QLIKE отложенная",
+                                                "data_version": "Версия данных", "seed": "Seed", "git_commit": "Коммит", "git_dirty": "Незакоммиченные правки", "created_at": "Создан"})
+        st.dataframe(table_view.round(4), hide_index=True, width="stretch", height=280)
         st.caption("Повторить любой эксперимент: python -m cryptocast reproduce --experiment-id <id>")
         shown = view.dropna(subset=["mae_holdout"]).drop_duplicates("model_name")
         if not shown.empty:
@@ -428,10 +444,10 @@ with tab_data:
             st.success(f"Контроль качества: критичных сбоев нет (проверок: {len(latest_run)}).")
         else:
             st.error(f"Критичные сбои: {len(critical)}. Обновление витрины заблокировано.")
-        st.dataframe(latest_run[["check_name", "scope", "severity", "passed", "value", "threshold", "details"]].rename(columns={"check_name": "Проверка", "scope": "Объект", "severity": "Важность", "passed": "Пройдена", "value": "Значение", "threshold": "Порог", "details": "Детали"}), hide_index=True, use_container_width=True, height=260)
+        st.dataframe(latest_run[["check_name", "scope", "severity", "passed", "value", "threshold", "details"]].rename(columns={"check_name": "Проверка", "scope": "Объект", "severity": "Важность", "passed": "Пройдена", "value": "Значение", "threshold": "Порог", "details": "Детали"}), hide_index=True, width="stretch", height=260)
     if not log_table.empty:
         st.markdown("##### Журнал последних загрузок")
-        st.dataframe(log_table.sort_values("started_at", ascending=False).head(30)[["run_id", "source", "status", "received", "inserted", "duplicates", "watermark_after", "error"]].rename(columns={"source": "Источник", "status": "Статус", "received": "Получено", "inserted": "Вставлено", "duplicates": "Дубликатов", "watermark_after": "Watermark", "error": "Сообщение"}), hide_index=True, use_container_width=True, height=300)
+        st.dataframe(log_table.sort_values("started_at", ascending=False).head(30)[["run_id", "source", "status", "received", "inserted", "duplicates", "watermark_after", "error"]].rename(columns={"source": "Источник", "status": "Статус", "received": "Получено", "inserted": "Вставлено", "duplicates": "Дубликатов", "watermark_after": "Watermark", "error": "Сообщение"}), hide_index=True, width="stretch", height=300)
     leakage = load_json("leakage_report")
     if leakage:
         st.markdown("##### Проверка отсутствия утечки")

@@ -67,9 +67,6 @@ def _market_features(daily: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     frame["mkt_log_rv_vs_ma30"] = frame["mkt_log_rv"] - frame["mkt_log_rv_ma30"]
     frame["mkt_log_qv_vs_ma7"] = frame["mkt_log_qv"] - frame["mkt_log_qv_ma7"]
     frame["mkt_log_rv_vs_ma7"] = frame["mkt_log_rv"] - frame["mkt_log_rv_ma7"]
-    frame["mkt_days_since_invalid"] = group["is_valid"].transform(
-        lambda s: (s.astype(int).groupby((~s).cumsum()).cumcount()).astype(float)
-    )
     # Общерыночный контекст: суточные показатели BTC и среднего по инструментам.
     btc = frame.loc[frame["symbol"] == "BTCUSDT", ["date", "mkt_log_qv", "mkt_log_rv", "mkt_return_1d"]]
     btc = btc.rename(columns={"mkt_log_qv": "mkt_btc_log_qv", "mkt_log_rv": "mkt_btc_log_rv", "mkt_return_1d": "mkt_btc_return_1d"})
