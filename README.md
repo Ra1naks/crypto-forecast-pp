@@ -57,7 +57,7 @@ docs/                   источники, вопросы дашборда, ч�
 Нужны Python 3.11+ и git.
 
 ```powershell
-git clone <адрес репозитория> cryptocast
+git clone https://github.com/Ra1naks/crypto-forecast-pp.git cryptocast
 cd cryptocast
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install --upgrade pip
